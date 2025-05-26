@@ -2,6 +2,10 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 import torch
 import torch.nn as nn
+import streamlit as st
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import plotly.express as px
 
 def simulate_harmonic_oscillator(timesteps=1000, dt=0.01, omega=2.0):
     x = np.zeros(timesteps)
@@ -113,18 +117,77 @@ def tune_threshold_f1(errors, true_anomaly_idxs, window_size, num_thresholds=100
 
         best = max(results, key=lambda x: x["f1"])
 
-        #if f1 > best_f1:
-        #    best_f1 = f1
-        #    best_threshold = t
-        #    best_metrics = {
-        #        "threshold": t,
-        #        "precision": precision,
-        #        "recall": recall,
-        #        "f1": f1,
-        #        "tp": tp,
-        #        "fp": fp,
-        #        "fn": fn,
-        #        "detected_idxs": detected_idxs,
-        #    }
-
     return best, results
+
+def second_derivative(x, dt=1.0):
+    return (x[:, 2:, 0] - 2 * x[:, 1:-1, 0] + x[:, :-2, 0]) / dt**2
+
+def sho_physics_loss(x, dt=1.0, omega=1.0):
+    d2x = second_derivative(x, dt)
+    x_trimmed = x[:, 1:-1, 0]  # trim to match d2x shape
+    physics_residual = d2x + (omega**2) * x_trimmed
+    return torch.mean(physics_residual**2)
+
+def combined_loss(x, recon_x, alpha=0.5, dt=1.0, omega=1.0):
+    mse = torch.nn.functional.mse_loss(recon_x, x)
+    physics = sho_physics_loss(x, dt, omega)
+    return mse + alpha * physics
+
+
+def combined_loss_tuned(x, recon_x, dt=1.0, omega=1.0):
+    alpha_range = np.linspace(0, 1, 100)
+    losses = []
+
+    for alpha in alpha_range:
+        loss = combined_loss(x, recon_x, alpha=alpha, dt=dt, omega=omega)
+        losses.append(loss.item())  # Assuming loss is a torch scalar
+
+    best_alpha = alpha_range[np.argmin(losses)]
+    best_loss = min(losses)
+
+    return best_alpha, best_loss, alpha_range, losses
+
+def plot_window_construction(x, x_anom, window_size, anomaly_idxs, mode="train"):
+    signal = x if mode == "train" else x_anom
+    num_windows = len(signal) - window_size + 1
+
+    st.write(f"### {'Clean Training' if mode == 'train' else 'Anomalous Testing'} Data (with Sliding Windows)")
+
+    window_slider = st.slider("Window index", 0, num_windows - 1, 0, key=f"window_slider_{mode}")
+
+    # Plot signal
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        y=signal,
+        mode="lines",
+        name="Signal",
+        line=dict(color="gray")
+    ))
+
+    # Highlight window
+    i = window_slider
+    fig.add_trace(go.Scatter(
+        x=list(range(i, i + window_size)),
+        y=signal[i:i + window_size],
+        mode="lines+markers",
+        name=f"Window {i}",
+        line=dict(color="blue" if mode == "train" else "red", width=3)
+    ))
+
+    # Optionally show anomaly markers
+    if mode == "test" and anomaly_idxs is not None:
+        fig.add_trace(go.Scatter(
+            x=anomaly_idxs,
+            y=signal[anomaly_idxs],
+            mode="markers",
+            marker=dict(color="black", size=8, symbol="x"),
+            name="Anomalies"
+        ))
+
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="Signal",
+        title="Sliding Window Visualization"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)

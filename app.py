@@ -17,26 +17,52 @@ st.set_page_config(page_title="Anomaly Detection in Harmonic Oscillator", layout
 
 # Sidebar Parameters
 st.sidebar.title("Simulation Settings")
-st.sidebar.markdown(":red[Signal generation settings]")
-omega = st.sidebar.slider("Oscillation period", 0.1, 100.0, 2.0, help="Controls how fast the signal oscillates")
-timesteps = st.sidebar.slider("Time steps", 500, 3000, 1000, help="Controls how long the signal oscillates")
-num_anomalies = st.sidebar.slider("Anomalies", 5, 50, 10, help="Controls the number of injected anomalies")
-severity = st.sidebar.slider("Perturbation Severity", 0.5, 5.0, 2.0, help="Controls the height or strength of the anomalies")
-st.sidebar.markdown(":red[Hyperparameters]")
-window_size = st.sidebar.slider("Window Size", 10, 50, 20, \
-    help="number of consecutive time steps fed into the LSTM as a single input sequence, optimal window size captures complete oscillation cycle and their natural variation.")
-hidden_dim = st.sidebar.slider("Hidden Dim", 4, 128, 16,\
-    help="number of neurons in each LSTM layer, too small hidden dimension forces strong compression and learns only essential features.")
-epochs = st.sidebar.slider("Epochs", 1, 100, 30, \
-    help="number of times the model sees the entire training dataset, too small leads to underfitting and too large gives overfitting.")
-learning_rate = st.sidebar.number_input("Learning Rate", 1e-5, 1e-1, 1e-3, format="%.5f",\
-    help="step size for weight updates during training, too large learning rate may lead to wild oscillations in training loss, bad convergence or overshooting optimal weight. Too small learning rate leads to very slow learning, needs many epochs and may get stuck in local minima.")
+st.sidebar.write("Use this panel for controlling the characteristic signal on which you want to perform the training \
+    and to control the LSTM network hyperparameters to achieve the best anomaly detection performance i.e. minimal loss.")
+with st.sidebar.expander(":red[Signal generation settings]"):
+    st.write("You can control how the signal is generated here.")
+    omega = st.slider("Oscillation period", 0.1, 100.0, 2.0, help="Controls how fast the signal oscillates")
+    timesteps = st.slider("Time steps", 500, 3000, 1000, help="Controls how long the signal oscillates")
+    num_anomalies = st.slider("Anomalies", 5, 50, 10, help="Controls the number of injected anomalies")
+    severity = st.slider("Perturbation Severity", 0.5, 5.0, 2.0, help="Controls the height or strength of the anomalies")
+with st.sidebar.expander(":red[Hyperparameters for LSTM]"):
+    st.write("You can change the hyperparmeters of the LSTM network to obtain the best anomaly detection performance for the generated signal.")
+    window_size = st.slider("Window Size", 10, 50, 20, \
+        help="number of consecutive time steps fed into the LSTM as a single input sequence, optimal window size captures complete oscillation cycle and their natural variation.")
+    hidden_dim = st.slider("Hidden Dim", 4, 128, 16,\
+        help="number of neurons in each LSTM layer, too small hidden dimension forces strong compression and learns only essential features.")
+    epochs = st.slider("Epochs", 1, 500, 30, \
+        help="number of times the model sees the entire training dataset, too small leads to underfitting and too large gives overfitting.")
+    learning_rate = st.number_input("Learning Rate", 1e-5, 1e-1, 1e-3, format="%.5f",\
+        help="step size for weight updates during training, too large learning rate may lead to wild oscillations in training loss, bad convergence or overshooting optimal weight. Too small learning rate leads to very slow learning, needs many epochs and may get stuck in local minima.")
+with st.sidebar.expander(":red[Adding physics knowledge]"):
+    st.write(
+        "Since the signal has a form of simple harmonic oscillator, you can impose the constratins of simple harmonic oscillator when computing the loss.")
+    st.write("For a system containing no anomalies")
+    st.latex(r'''\frac{d^2x}{dt^2} + \omega x = 0.''')
+    st.write("Any deviation from this equation is also an error in the system and hence part of loss.")
+    use_physics = st.checkbox("Use Physics Constraint", value=True,\
+        help="If set true, it will apply physics knowledge of simple harmonic oscillator when computing loss function.")
+    tune_alpha = st.checkbox("Automatically tune physics loss", value=True,\
+        help="If set true, it will automatically decide the weight of physics based loss in training.")
 
 st.title("LSTM Autoencoder: Anomaly Detection in a Simulated Harmonic Oscillator")
+with st. expander(":red[Explanation]"):
+    st.write("We will learn how to tune an Long-Short Term Memory (LSTM) autoencoder for anomaly detection of a simple harmonic oscillator signal. ")
+    st.write("A simple harmonic oscillator moving in x-direction follows the equation ")
+    st.latex(r'''\frac{d^2x}{dt^2} + \omega x = 0''')
+    st.write("In absence of any disturbance, the motion looks like a sin or a cos function. However, if the oscillator is temperorily disturbed, \
+              the motion is disrupted creating what we know as an anomaly. We want to train a long-short term autoencoder to be able to detect this disruption.\
+             Such anomaly detection techniques are useful in many cases ranging from credit card transactions to weather forecasting.\
+             The idea is as follows, if we train a network capable of reconstructing the simple harmonic oscillator motion in absence of any disruption, \
+             it will not be able to reconstruct a signal containing disruption and hence claim that it is an anomaly.")
 
+dt=0.01
 # Simulation
-x = simulate_harmonic_oscillator(timesteps=timesteps, omega=omega)
+x = simulate_harmonic_oscillator(timesteps=timesteps, omega=omega, dt=dt)
 x_anom, anomaly_idxs = inject_perturbations(x, num_anomalies, severity)
+#plot_window_construction(x, x_anom, window_size=50, anomaly_idxs=anomaly_idxs, mode="train")  # for clean
+#plot_window_construction(x, x_anom, window_size=50, anomaly_idxs=anomaly_idxs, mode="test")   # for test
 
 # Rolling window for clean training data
 X_windows_clean = create_rolling_dataset(x, window_size=window_size)
@@ -44,7 +70,7 @@ X_windows_clean = create_rolling_dataset(x, window_size=window_size)
 # Rolling window for anomalous testing data
 X_windows_anom = create_rolling_dataset(x_anom, window_size=window_size)
 
-st.markdown("Generated anomalous signal")
+st.subheader("Generated anomalous signal")
 # Update plot
 fig = go.Figure()
 
@@ -82,7 +108,15 @@ model = LSTMAutoencoder(seq_len = window_size, hidden_dim = hidden_dim)
 criterion = torch.nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-st.markdown("Training Loss")
+#st.markdown(":red[Training Loss]")
+st.subheader("Training Loss")
+with st.expander(":red[Explanation]"):
+    st.write("This is the error or difference between a model’s predicted output and the actual target values during the training phase. \
+            It quantifies how well (or poorly) the model is performing on the training data. Lower training loss generally indicates that\
+             the model is learning patterns in the data. The data for us is the signal without any anomalies.")
+    st.write("An epoch is one complete pass through the entire training dataset. So, if you train for 10 epochs, the model will have seen the entire dataset 10 times. \
+             Increasing the number of epochs allows the model more opportunities to learn, but too many can lead to overfitting.")
+    st.write("Keep in mind that most of the times, an optimally trained network does not lead to zero loss, meaning some reconstruction errors are always present.")
 loss_placeholder = st.empty()
 loss_data = pd.DataFrame(columns=["Epoch", "Loss"])
 
@@ -109,7 +143,10 @@ for epoch in range(epochs):
         seq = batch[0]
         optimizer.zero_grad()
         output = model(seq)
-        loss = criterion(output, seq)
+        if use_physics:
+            loss=combined_loss(seq, output, dt=timesteps, omega=omega, alpha = 0.0)
+        else:
+            loss = criterion(output, seq)
         loss.backward()
         optimizer.step()
     losses.append(loss.item())
@@ -189,6 +226,16 @@ fig.update_layout(
         yaxis=dict(showline=True, linewidth=2, linecolor='black', mirror=True))
 
 st.subheader("Threshold Optimization")
+with st.expander(":red[Explanation]"):
+    st.write(
+        "If we pass an anomalous signal through our network, it will reconstruct it poorly, resulting in a higher loss. "
+        "We then need to decide how large a reconstruction error should be labeled as an anomaly. "
+        "This is done by optimizing a threshold, based on well-known metrics such as precision, recall, and F1-score."
+    )
+    st.write("**Precision**: Of all predicted anomalies, how many were correct? (High precision means few false positives)")
+    st.write("**Recall**: Of all actual anomalies, how many were detected? (High recall means few false negatives)")
+    st.write("**F1-score**: Harmonic mean of precision and recall; balances the two.")
+    st.write("This step is done automatically by the code, there is no external input required.")
 st.plotly_chart(fig, use_container_width=True)
 
 # Calculate optimal threshold via percentile
@@ -198,13 +245,37 @@ val_anomalies = val_errors > threshold
 window_centers = np.arange(window_size // 2, len(x_val_anom) - window_size // 2)
 
 # Match window-level anomalies to injected anomalies
-detected_idxs = window_centers[val_anomalies]
-true_positives = [idx for idx in val_anomaly_idxs if any(abs(idx - d) <= window_size // 2 for d in detected_idxs)]
-false_negatives = [idx for idx in val_anomaly_idxs if idx not in true_positives]
-precision = len(true_positives) / len(detected_idxs) if len(detected_idxs) > 0 else 0
-recall = len(true_positives) / len(val_anomaly_idxs) if len(val_anomaly_idxs) > 0 else 0
+#detected_idxs = window_centers[val_anomalies]
+#true_positives = [idx for idx in val_anomaly_idxs if any(abs(idx - d) <= window_size // 2 for d in detected_idxs)]
+#false_negatives = [idx for idx in val_anomaly_idxs if idx not in true_positives]
+
+precision = best_result['tp'] / len(detected_idxs) if len(detected_idxs) > 0 else 0
+recall = best_result['tp'] / len(val_anomaly_idxs) if len(val_anomaly_idxs) > 0 else 0
 
 st.subheader("Anomaly detection results")
+with st.expander(":red[Explanation]"):
+    st.write(f"Once anomaly detection training is complete, some scores are reported. They are as follows:")
+    #st.write(f"For a  given window, containing data points $[x_i, x_{{i+1}}, x_{{i+2}}, \\ldots x_{{i+n-1}}]$, the code predicts $x_n$".)
+    st.write(
+        "For a given window, containing data points $[x_i, x_{i+1}, x_{i+2}, \\ldots, x_{i+n-1}]$, the code predicts $x_n$.")
+
+    st.write(f"If this predicted value of $x_n$ differs from the value in data, then an anomaly is reported.")
+    st.write(f"The total number of detected anomalies is therefore number of times this $x_n$ was predicted with a large error.")
+    st.write(f"Keep in mind that this does not mean that the code is wrong, the aim is to reliably predict presence of an anomaly in the signal.")
+
+st.write(f"The total number of detected anomalies were {len(detected_idxs)}")
+st.write(f"Number of times network correctly identified injected anomaly {best_result['tp']}")
+st.write(f"Number of times network identified anomaly when none was present {best_result['fp']}")
+st.write(f"Precision {best_result['precision']:.2f}")
+st.write(f"Recall {best_result['recall']:.2f}")
+st.write(f"F1 score {best_result['f1']:.2f}")
+#- **True Injected:** `{len(val_anomaly_idxs)}`
+#- **True Positives:** `{best_result['tp']}`
+#- **False Positives:** `{best_result['fp']}`
+#- **Precision:** `{precision:.2f}`
+#- **Recall:** `{recall:.2f}`
+#- **F1 Score:** `{best_result['f1']:.2f}`
+#")
 
 fig = make_subplots(
     rows=3, cols=1,
